@@ -7,7 +7,8 @@ SECRET_KEY = 'django-insecure-your-dev-secret-key-here'
 DEBUG = True
 ALLOWED_HOSTS = [
     'localhost', 
-    '127.0.0.1', 
+    '127.0.0.1',
+	'bot.laconistiq.ru', 
 ]
 
 
@@ -76,6 +77,9 @@ STATIC_URL = '/static/'
 STATICFILES_DIRS = []
 if DEBUG:
     STATICFILES_DIRS = [BASE_DIR / 'static']
+
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
