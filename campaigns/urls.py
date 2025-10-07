@@ -3,6 +3,5 @@ from . import views
 from . import telegram_handlers
 
 urlpatterns = [
-    path('telegram/', telegram_handlers.telegram_webhook, name='telegram_webhook'),
-    path('test/', views.test_page, name='test_page'),
+    path('telegram-webhook/<str:token>/', telegram_handlers.telegram_webhook, name='telegram_webhook'),
 ]
