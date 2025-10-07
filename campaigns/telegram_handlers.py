@@ -69,7 +69,7 @@ def handle_start(chat_id, user_id, first_name, username, campaign):
         # Приветственное сообщение с кнопкой
         keyboard = {
             'keyboard': [
-                [{'text': '🎯 Участвовать в розыгрыше'}]
+                [{'text': '🎯 Участвовать в розыгрыше!'}]
             ],
             'resize_keyboard': True,
             'one_time_keyboard': False
