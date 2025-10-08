@@ -5,7 +5,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DEBUG = False
-ALLOWED_HOSTS = ['195.24.64.61', 'static.laconistiq.ru', 'localhost']
+ALLOWED_HOSTS = ['bot.laconistiq.ru', 'localhost', '127.0.0.1']
+
 
 # База данных PostgreSQL
 DATABASES = {
