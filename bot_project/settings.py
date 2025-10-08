@@ -111,5 +111,5 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Telegram Bot settings - используем ваше название переменной
-TELEGRAM_BOT_TOKEN = os.getenv('BOT_TOKEN', '')
+BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 WEBHOOK_URL = os.getenv('WEBHOOK_URL', '')
