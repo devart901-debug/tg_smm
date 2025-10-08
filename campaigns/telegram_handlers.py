@@ -14,14 +14,32 @@ load_dotenv()
 @csrf_exempt
 @require_POST
 def telegram_webhook(request):
-    """Обработка вебхука Telegram"""
+    """Обработка вебхука Telegram (сообщения и callback-и)"""
     try:
         active_campaign = Campaign.objects.filter(status='active', bot_is_running=True).first()
         if not active_campaign:
-            print("❌ Нет активных кампаний с запущенным ботом")
             return JsonResponse({'ok': True})
 
         update = json.loads(request.body)
+
+        # 🔹 1. Callback от inline кнопки
+        if 'callback_query' in update:
+            callback = update['callback_query']
+            data = callback.get('data')
+            chat_id = callback['message']['chat']['id']
+            user_id = callback['from']['id']
+
+            participant = Participant.objects.filter(campaign=active_campaign, telegram_id=user_id).first()
+            if not participant:
+                send_telegram_message(chat_id, "❌ Сначала нажмите /start")
+                return JsonResponse({'ok': True})
+
+            if data == 'check_subscription':
+                handle_subscription_stage(chat_id, user_id, active_campaign, participant)
+
+            return JsonResponse({'ok': True})
+
+        # 🔹 2. Обычные сообщения
         if 'message' not in update:
             return JsonResponse({'ok': True})
 
@@ -32,25 +50,21 @@ def telegram_webhook(request):
         username = message['from'].get('username', '')
         text = message.get('text', '')
 
-        # Контакт
         if 'contact' in message:
             phone = message['contact'].get('phone_number', '')
             handle_contact(chat_id, user_id, phone, first_name, username, active_campaign)
             return JsonResponse({'ok': True})
 
-        # Команда /start
         if text == '/start':
             handle_start(chat_id, user_id, first_name, username, active_campaign)
             return JsonResponse({'ok': True})
 
-        # Пользовательский текст
         handle_user_message(chat_id, user_id, text, first_name, username, active_campaign)
 
     except Exception as e:
         print(f"❌ Error in webhook: {e}")
 
     return JsonResponse({'ok': True})
-
 
 def handle_start(chat_id, user_id, first_name, username, campaign):
     """Начало общения с ботом"""
@@ -157,9 +171,12 @@ def handle_phone_stage(chat_id, campaign, participant, text):
     participant.registration_stage = 'subscription'
     participant.save()
 
-    # Отправка условий акции с inline кнопкой
-    send_conditions_with_inline_button(chat_id, campaign)
+    # 🔹 Убираем клавиатуру
+    remove_keyboard = {"remove_keyboard": True}
+    send_telegram_message(chat_id, "Спасибо! Теперь ознакомьтесь с условиями розыгрыша:", reply_markup=remove_keyboard)
 
+    # 🔹 Отправляем условия с inline-кнопкой
+    send_conditions_with_inline_button(chat_id, campaign)
 
 def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
     """Обработка контакта Telegram"""
@@ -172,8 +189,12 @@ def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
     participant.registration_stage = 'subscription'
     participant.save()
 
-    send_conditions_with_inline_button(chat_id, campaign)
+    # 🔹 Убираем клавиатуру
+    remove_keyboard = {"remove_keyboard": True}
+    send_telegram_message(chat_id, "Спасибо! Теперь ознакомьтесь с условиями розыгрыша:", reply_markup=remove_keyboard)
 
+    # 🔹 Отправляем условия акции с inline кнопкой
+    send_conditions_with_inline_button(chat_id, campaign)
 
 def send_conditions_with_inline_button(chat_id, campaign):
     """Отправляем текст условий акции и inline кнопку"""
