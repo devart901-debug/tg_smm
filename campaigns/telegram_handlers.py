@@ -22,18 +22,6 @@ def telegram_webhook(request):
             return JsonResponse({'ok': True})
 
         update = json.loads(request.body)
-
-        # Обработка callback от inline-кнопок
-        if 'callback_query' in update:
-            user_id = update['callback_query']['from']['id']
-            chat_id = update['callback_query']['message']['chat']['id']
-            data = update['callback_query']['data']
-
-            participant = Participant.objects.filter(campaign=active_campaign, telegram_id=user_id).first()
-            if participant and data == 'check_subscription':
-                handle_subscription_stage(chat_id, user_id, active_campaign, participant)
-            return JsonResponse({'ok': True})
-
         if 'message' not in update:
             return JsonResponse({'ok': True})
 
@@ -139,11 +127,10 @@ def handle_name_stage(chat_id, participant, text):
 
 
 def ask_phone(chat_id, participant):
-    """Запрос телефона через ReplyKeyboard"""
+    """Запрос телефона"""
     keyboard = {
         'keyboard': [[{'text': participant.campaign.share_phone_button or '📱 Поделиться номером', 'request_contact': True}]],
-        'resize_keyboard': True,
-        'one_time_keyboard': True
+        'resize_keyboard': True
     }
     send_telegram_message(
         chat_id,
@@ -154,7 +141,7 @@ def ask_phone(chat_id, participant):
 
 
 def handle_phone_stage(chat_id, campaign, participant, text):
-    """Сохраняем телефон и предлагаем подписку"""
+    """Сохраняем телефон и отправляем условия акции с inline кнопкой"""
     if not text.strip():
         send_telegram_message(chat_id, "Пожалуйста, введите ваш телефон:")
         return
@@ -170,7 +157,8 @@ def handle_phone_stage(chat_id, campaign, participant, text):
     participant.registration_stage = 'subscription'
     participant.save()
 
-    ask_for_subscription(chat_id, campaign, participant)
+    # Отправка условий акции с inline кнопкой
+    send_conditions_with_inline_button(chat_id, campaign)
 
 
 def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
@@ -183,24 +171,21 @@ def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
     participant.phone = re.sub(r'[^\d+]', '', phone)
     participant.registration_stage = 'subscription'
     participant.save()
-    ask_for_subscription(chat_id, campaign, participant)
+
+    send_conditions_with_inline_button(chat_id, campaign)
 
 
-def ask_for_subscription(chat_id, campaign, participant):
-    """Запрос подписки на каналы с кнопкой inline"""
-    channels = [ch.strip() for ch in campaign.channel_usernames.split(',') if ch.strip()]
-    channels_text = "\n".join([f"• {ch}" for ch in channels])
-
-    keyboard = {
-        'inline_keyboard': [[
-            {'text': campaign.conditions_button or '✅ Проверить подписку', 'callback_data': 'check_subscription'}
-        ]]
+def send_conditions_with_inline_button(chat_id, campaign):
+    """Отправляем текст условий акции и inline кнопку"""
+    inline_keyboard = {
+        "inline_keyboard": [
+            [{"text": "✅ Проверить подписку", "callback_data": "check_subscription"}]
+        ]
     }
-
     send_telegram_message(
         chat_id,
-        f"📢 *Подпишитесь на наши каналы*\n\n{channels_text}\n\nПосле подписки нажмите кнопку:",
-        reply_markup=keyboard,
+        campaign.conditions_text,
+        reply_markup=inline_keyboard,
         parse_mode='Markdown'
     )
 
@@ -213,30 +198,28 @@ def handle_subscription_stage(chat_id, user_id, campaign, participant):
         participant.is_subscribed = True
         participant.registration_stage = 'completed'
         participant.save()
-        keyboard = {
-            'inline_keyboard': [[{'text': campaign.button_text or '🎯 Участвовать', 'callback_data': 'start'}]]
-        }
         send_telegram_message(
             chat_id,
             f"🎉 *Регистрация завершена!*\n\n✅ Вы успешно зарегистрированы!\n👤 Имя: {participant.first_name}\n📞 Телефон: {participant.phone}",
-            reply_markup=keyboard,
             parse_mode='Markdown'
         )
     else:
         failed_text = "\n".join([f"• {ch}" for ch in failed_channels])
-        keyboard = {
-            'inline_keyboard': [[{'text': campaign.conditions_button or '✅ Проверить подписку', 'callback_data': 'check_subscription'}]]
+        inline_keyboard = {
+            "inline_keyboard": [
+                [{"text": "✅ Проверить подписку", "callback_data": "check_subscription"}]
+            ]
         }
         send_telegram_message(
             chat_id,
             f"❌ *Вы не подписаны на все каналы!*\n\nНе подписаны:\n{failed_text}\n\nПожалуйста, подпишитесь и нажмите кнопку снова:",
-            reply_markup=keyboard,
+            reply_markup=inline_keyboard,
             parse_mode='Markdown'
         )
 
 
 def check_user_subscription(user_id, campaign):
-    """Проверка подписки пользователя на каналы через Telegram API"""
+    """Проверка подписки пользователя на каналы"""
     bot_token = os.getenv("BOT_TOKEN")
     channels = [ch.strip() for ch in campaign.channel_usernames.split(',') if ch.strip()]
     failed_channels = []
@@ -261,12 +244,10 @@ def send_telegram_message(chat_id, text, reply_markup=None, parse_mode=None):
     """Отправка сообщения через Telegram API"""
     bot_token = os.getenv("BOT_TOKEN")
     data = {'chat_id': chat_id, 'text': text}
-
     if reply_markup:
         data['reply_markup'] = json.dumps(reply_markup)
     if parse_mode:
         data['parse_mode'] = parse_mode
-
     try:
         requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data=data)
     except Exception as e:
