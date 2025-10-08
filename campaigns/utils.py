@@ -2,6 +2,34 @@
 import requests
 
 def check_user_subscription(bot_token, user_id, channel_usernames):
+    if not channel_usernames:
+        return True, None
+
+    channels = [c.strip() for c in channel_usernames.split(',')]
+    for channel in channels:
+        if not channel.startswith('@'):
+            channel = '@' + channel
+
+        url = f"https://api.telegram.org/bot{bot_token}/getChatMember"
+        params = {'chat_id': channel, 'user_id': user_id}
+
+        try:
+            response = requests.get(url, params=params, timeout=10)
+            data = response.json()
+            if data.get('ok'):
+                status = data['result'].get('status')
+                if status in ['left', 'kicked']:
+                    return False, channel
+            else:
+                # Telegram вернул ошибку, например бот не член канала
+                print(f"check_user_subscription Telegram error: {data}")
+                return False, channel
+        except Exception as e:
+            print(f"Ошибка проверки подписки на {channel}: {e}")
+            return False, channel
+
+    return True, None
+
     """
     Проверяет подписку пользователя на все указанные каналы
     Возвращает (is_subscribed: bool, failed_channel: str)
