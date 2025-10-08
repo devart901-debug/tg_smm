@@ -77,10 +77,14 @@ def handle_callback(callback):
     user_id = callback['from']['id']
     chat_id = callback['message']['chat']['id']
 
-    participant = Participant.objects.filter(telegram_id=user_id, registration_stage='subscription').first()
     campaign = Campaign.objects.filter(status='active', bot_is_running=True).first()
-    if not participant or not campaign:
-        send_message(chat_id, "❌ Произошла ошибка, попробуйте снова")
+    if not campaign:
+        send_message(chat_id, "❌ Произошла ошибка, попробуйте позже")
+        return
+
+    participant = Participant.objects.filter(telegram_id=user_id, campaign=campaign).first()
+    if not participant:
+        send_message(chat_id, "❌ Сначала нажмите /start для начала регистрации")
         return
 
     if data == 'check_subscription':
@@ -95,22 +99,35 @@ def handle_callback(callback):
                 reply_markup={'inline_keyboard': [[{'text': campaign.button_text or '🎯 Участвовать', 'callback_data': 'participate'}]]}
             )
         else:
+            # Если не подписан, присылаем условия + кнопку
             send_message(
                 chat_id,
-                f"❌ Вы не подписаны на канал {failed_channel}\nПожалуйста, подпишитесь и нажмите кнопку снова",
+                f"❌ Вы не подписаны на канал {failed_channel}\n{campaign.conditions_text or '📋 Ознакомьтесь с условиями акции'}",
                 reply_markup={'inline_keyboard': [[{'text': '✅ Проверить подписку', 'callback_data': 'check_subscription'}]]}
             )
+
 
 # ==============================
 # STAGES
 # ==============================
 def handle_start(chat_id, user_id, first_name, username, campaign):
+    # Проверяем есть ли участник
+    participant = Participant.objects.filter(campaign=campaign, telegram_id=user_id).first()
+    if participant:
+        if participant.registration_stage == 'completed':
+            send_message(
+                chat_id,
+                f"Вы уже зарегистрированы!\n👤 Имя: {participant.first_name}\n📞 Телефон: {participant.phone}",
+                reply_markup={'inline_keyboard': [[{'text': campaign.button_text or '🎯 Участвовать', 'callback_data': 'participate'}]]}
+            )
+        elif participant.registration_stage == 'subscription':
+            ask_subscription(chat_id, campaign)
+        else:
+            send_message(chat_id, "❌ Вы начали регистрацию ранее. Пожалуйста, продолжите с того места, где остановились.")
+        return
+
+    # Если участника нет — создаем нового
     send_message(chat_id, campaign.first_message or "Добро пожаловать! Нажмите кнопку ниже, чтобы участвовать.")
-    Participant.objects.filter(
-        campaign=campaign,
-        telegram_id=user_id,
-        registration_stage__in=['name','phone','subscription']
-    ).delete()
     participant = Participant.objects.create(
         campaign=campaign,
         telegram_id=user_id,
@@ -119,6 +136,7 @@ def handle_start(chat_id, user_id, first_name, username, campaign):
         registration_stage='name'
     )
     ask_name(chat_id)
+
 
 def handle_name_stage(chat_id, participant, text):
     if not text.strip():
