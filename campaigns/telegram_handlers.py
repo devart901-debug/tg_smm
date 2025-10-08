@@ -1,275 +1,189 @@
+# campaigns/telegram_handlers.py
 import json
-import requests
 import re
+import os
+import requests
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from .models import Campaign, Participant
-import os
-from dotenv import load_dotenv
+from .utils import check_user_subscription
 
-load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-
+# ==============================
+# WEBHOOK
+# ==============================
 @csrf_exempt
 @require_POST
 def telegram_webhook(request):
-    """Обработка вебхука Telegram (сообщения и callback-и)"""
     try:
-        active_campaign = Campaign.objects.filter(status='active', bot_is_running=True).first()
-        if not active_campaign:
-            return JsonResponse({'ok': True})
-
         update = json.loads(request.body)
-
-        # 🔹 1. Callback от inline кнопки
-        if 'callback_query' in update:
-            callback = update['callback_query']
-            data = callback.get('data')
-            chat_id = callback['message']['chat']['id']
-            user_id = callback['from']['id']
-
-            participant = Participant.objects.filter(campaign=active_campaign, telegram_id=user_id).first()
-            if not participant:
-                send_telegram_message(chat_id, "❌ Сначала нажмите /start")
-                return JsonResponse({'ok': True})
-
-            if data == 'check_subscription':
-                handle_subscription_stage(chat_id, user_id, active_campaign, participant)
-
-            return JsonResponse({'ok': True})
-
-        # 🔹 2. Обычные сообщения
-        if 'message' not in update:
-            return JsonResponse({'ok': True})
-
-        message = update['message']
-        chat_id = message['chat']['id']
-        user_id = message['from']['id']
-        first_name = message['from'].get('first_name', '')
-        username = message['from'].get('username', '')
-        text = message.get('text', '')
-
-        if 'contact' in message:
-            phone = message['contact'].get('phone_number', '')
-            handle_contact(chat_id, user_id, phone, first_name, username, active_campaign)
-            return JsonResponse({'ok': True})
-
-        if text == '/start':
-            handle_start(chat_id, user_id, first_name, username, active_campaign)
-            return JsonResponse({'ok': True})
-
-        handle_user_message(chat_id, user_id, text, first_name, username, active_campaign)
-
+        if 'message' in update:
+            handle_message(update['message'])
+        elif 'callback_query' in update:
+            handle_callback(update['callback_query'])
     except Exception as e:
-        print(f"❌ Error in webhook: {e}")
-
+        print(f"Webhook error: {e}")
     return JsonResponse({'ok': True})
 
-def handle_start(chat_id, user_id, first_name, username, campaign):
-    """Начало общения с ботом"""
-    try:
-        # Приветственное сообщение
-        send_telegram_message(chat_id, campaign.first_message or "Добро пожаловать на мероприятие!")
+# ==============================
+# MESSAGE HANDLER
+# ==============================
+def handle_message(message):
+    chat_id = message['chat']['id']
+    user_id = message['from']['id']
+    text = message.get('text', '')
+    first_name = message['from'].get('first_name', '')
+    username = message['from'].get('username', '')
 
-        # Удаляем старые незавершенные регистрации
-        Participant.objects.filter(
-            telegram_id=user_id,
-            campaign=campaign,
-            registration_stage__in=['name', 'phone', 'subscription']
-        ).delete()
+    campaign = Campaign.objects.filter(status='active', bot_is_running=True).first()
+    if not campaign:
+        return
 
-        # Создаем нового участника
-        participant = Participant.objects.create(
-            campaign=campaign,
-            telegram_id=user_id,
-            username=username,
-            first_name=first_name,
-            registration_stage='name'
-        )
+    # Контакт
+    if 'contact' in message:
+        phone = message['contact'].get('phone_number', '')
+        handle_contact(chat_id, user_id, phone, first_name, username, campaign)
+        return
 
-        ask_name(chat_id, participant)
+    # /start
+    if text == '/start':
+        handle_start(chat_id, user_id, first_name, username, campaign)
+        return
 
-    except Exception as e:
-        print(f"❌ Error in handle_start: {e}")
-        send_telegram_message(chat_id, "❌ Произошла ошибка, попробуйте позже")
-
-
-def ask_name(chat_id, participant):
-    """Запрос имени"""
-    send_telegram_message(
-        chat_id,
-        "📝 *Как вас зовут?*\n\nВведите ваше имя и фамилию:",
-        {'remove_keyboard': True},
-        parse_mode='Markdown'
-    )
-
-
-def handle_user_message(chat_id, user_id, text, first_name, username, campaign):
-    """Обработка сообщений по стадиям регистрации"""
+    # Обработка обычного текста
     participant = Participant.objects.filter(campaign=campaign, telegram_id=user_id).first()
     if not participant:
-        send_telegram_message(chat_id, "❌ Пожалуйста, нажмите /start для начала регистрации")
+        send_message(chat_id, "❌ Пожалуйста, нажмите /start для начала регистрации")
         return
 
     stage = participant.registration_stage
-
     if stage == 'name':
         handle_name_stage(chat_id, participant, text)
     elif stage == 'phone':
-        handle_phone_stage(chat_id, campaign, participant, text)
+        handle_phone_stage(chat_id, participant, text, campaign)
     elif stage == 'subscription':
-        if text == (campaign.conditions_button or '✅ Проверить подписку'):
-            handle_subscription_stage(chat_id, user_id, campaign, participant)
-        else:
-            send_telegram_message(
-                chat_id,
-                f"❌ Сначала подпишитесь на каналы и нажмите кнопку '{campaign.conditions_button or '✅ Проверить подписку'}'"
-            )
+        send_message(
+            chat_id,
+            "📋 Пожалуйста, используйте кнопку 'Проверить подписку', чтобы продолжить"
+        )
 
+# ==============================
+# CALLBACK HANDLER
+# ==============================
+def handle_callback(callback):
+    data = callback['data']
+    user_id = callback['from']['id']
+    chat_id = callback['message']['chat']['id']
 
-def handle_name_stage(chat_id, participant, text):
-    """Сохраняем имя и запрашиваем телефон"""
-    if not text.strip():
-        send_telegram_message(chat_id, "Пожалуйста, введите ваше имя:")
+    participant = Participant.objects.filter(telegram_id=user_id, registration_stage='subscription').first()
+    campaign = Campaign.objects.filter(status='active', bot_is_running=True).first()
+    if not participant or not campaign:
+        send_message(chat_id, "❌ Произошла ошибка, попробуйте снова")
         return
 
+    if data == 'check_subscription':
+        is_subscribed, failed_channel = check_user_subscription(BOT_TOKEN, user_id, campaign.channel_usernames)
+        if is_subscribed:
+            participant.is_subscribed = True
+            participant.registration_stage = 'completed'
+            participant.save()
+            send_message(
+                chat_id,
+                f"🎉 Регистрация завершена!\n👤 Имя: {participant.first_name}\n📞 Телефон: {participant.phone}",
+                reply_markup={'inline_keyboard': [[{'text': campaign.button_text or '🎯 Участвовать', 'callback_data': 'participate'}]]}
+            )
+        else:
+            send_message(
+                chat_id,
+                f"❌ Вы не подписаны на канал {failed_channel}\nПожалуйста, подпишитесь и нажмите кнопку снова",
+                reply_markup={'inline_keyboard': [[{'text': '✅ Проверить подписку', 'callback_data': 'check_subscription'}]]}
+            )
+
+# ==============================
+# STAGES
+# ==============================
+def handle_start(chat_id, user_id, first_name, username, campaign):
+    send_message(chat_id, campaign.first_message or "Добро пожаловать! Нажмите кнопку ниже, чтобы участвовать.")
+    Participant.objects.filter(
+        campaign=campaign,
+        telegram_id=user_id,
+        registration_stage__in=['name','phone','subscription']
+    ).delete()
+    participant = Participant.objects.create(
+        campaign=campaign,
+        telegram_id=user_id,
+        username=username,
+        first_name=first_name,
+        registration_stage='name'
+    )
+    ask_name(chat_id)
+
+def handle_name_stage(chat_id, participant, text):
+    if not text.strip():
+        send_message(chat_id, "Пожалуйста, введите ваше имя:")
+        return
     participant.first_name = text.strip()
     participant.registration_stage = 'phone'
     participant.save()
     ask_phone(chat_id, participant)
 
-
-def ask_phone(chat_id, participant):
-    """Запрос телефона"""
-    keyboard = {
-        'keyboard': [[{'text': participant.campaign.share_phone_button or '📱 Поделиться номером', 'request_contact': True}]],
-        'resize_keyboard': True
-    }
-    send_telegram_message(
-        chat_id,
-        f"Приятно познакомиться, {participant.first_name}! 📱 *Ваш номер телефона*\n\nВведите номер или нажмите кнопку:",
-        keyboard,
-        parse_mode='Markdown'
-    )
-
-
-def handle_phone_stage(chat_id, campaign, participant, text):
-    """Сохраняем телефон и отправляем условия акции с inline кнопкой"""
+def handle_phone_stage(chat_id, participant, text, campaign):
     if not text.strip():
-        send_telegram_message(chat_id, "Пожалуйста, введите ваш телефон:")
+        send_message(chat_id, "Пожалуйста, введите ваш номер:")
         return
-
-    # Приведение к формату +7...
     phone = re.sub(r'[^\d+]', '', text.strip())
     if phone.startswith('8'):
         phone = '+7' + phone[1:]
     elif not phone.startswith('+'):
         phone = '+' + phone
-
     participant.phone = phone
     participant.registration_stage = 'subscription'
     participant.save()
-
-    # 🔹 Убираем клавиатуру
-    remove_keyboard = {"remove_keyboard": True}
-    send_telegram_message(chat_id, "Спасибо! Теперь ознакомьтесь с условиями розыгрыша:", reply_markup=remove_keyboard)
-
-    # 🔹 Отправляем условия с inline-кнопкой
-    send_conditions_with_inline_button(chat_id, campaign)
+    ask_subscription(chat_id, campaign)
 
 def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
-    """Обработка контакта Telegram"""
-    participant = Participant.objects.filter(campaign=campaign, telegram_id=user_id).first()
+    participant = Participant.objects.filter(telegram_id=user_id, campaign=campaign).first()
     if not participant:
-        send_telegram_message(chat_id, "❌ Сначала нажмите /start")
+        send_message(chat_id, "❌ Сначала нажмите /start")
         return
-
-    participant.phone = re.sub(r'[^\d+]', '', phone)
+    phone = re.sub(r'[^\d+]', '', phone)
+    participant.phone = phone
     participant.registration_stage = 'subscription'
     participant.save()
+    ask_subscription(chat_id, campaign)
 
-    # 🔹 Убираем клавиатуру
-    remove_keyboard = {"remove_keyboard": True}
-    send_telegram_message(chat_id, "Спасибо! Теперь ознакомьтесь с условиями розыгрыша:", reply_markup=remove_keyboard)
+# ==============================
+# ASK FUNCTIONS
+# ==============================
+def ask_name(chat_id):
+    send_message(chat_id, "📝 Как вас зовут?\nВведите имя и фамилию:")
 
-    # 🔹 Отправляем условия акции с inline кнопкой
-    send_conditions_with_inline_button(chat_id, campaign)
-
-def send_conditions_with_inline_button(chat_id, campaign):
-    """Отправляем текст условий акции и inline кнопку"""
-    inline_keyboard = {
-        "inline_keyboard": [
-            [{"text": "✅ Проверить подписку", "callback_data": "check_subscription"}]
-        ]
+def ask_phone(chat_id, participant):
+    keyboard = {
+        'keyboard': [[{'text': participant.campaign.share_phone_button or '📱 Поделиться номером', 'request_contact': True}]],
+        'resize_keyboard': True,
+        'one_time_keyboard': True
     }
-    send_telegram_message(
-        chat_id,
-        campaign.conditions_text,
-        reply_markup=inline_keyboard,
-        parse_mode='Markdown'
-    )
+    send_message(chat_id, f"Приятно познакомиться, {participant.first_name}! Введите номер или нажмите кнопку:", reply_markup=keyboard)
 
+def ask_subscription(chat_id, campaign):
+    # Текст условий и кнопка проверки подписки
+    text = campaign.conditions_text or "📋 Текст условий акции"
+    keyboard = {
+        'inline_keyboard': [[{'text': campaign.conditions_button or '✅ Проверить подписку', 'callback_data': 'check_subscription'}]]
+    }
+    send_message(chat_id, text, reply_markup=keyboard)
 
-def handle_subscription_stage(chat_id, user_id, campaign, participant):
-    """Проверка подписки и завершение регистрации"""
-    is_subscribed, failed_channels = check_user_subscription(user_id, campaign)
-
-    if is_subscribed:
-        participant.is_subscribed = True
-        participant.registration_stage = 'completed'
-        participant.save()
-        send_telegram_message(
-            chat_id,
-            f"🎉 *Регистрация завершена!*\n\n✅ Вы успешно зарегистрированы!\n👤 Имя: {participant.first_name}\n📞 Телефон: {participant.phone}",
-            parse_mode='Markdown'
-        )
-    else:
-        failed_text = "\n".join([f"• {ch}" for ch in failed_channels])
-        inline_keyboard = {
-            "inline_keyboard": [
-                [{"text": "✅ Проверить подписку", "callback_data": "check_subscription"}]
-            ]
-        }
-        send_telegram_message(
-            chat_id,
-            f"❌ *Вы не подписаны на все каналы!*\n\nНе подписаны:\n{failed_text}\n\nПожалуйста, подпишитесь и нажмите кнопку снова:",
-            reply_markup=inline_keyboard,
-            parse_mode='Markdown'
-        )
-
-
-def check_user_subscription(user_id, campaign):
-    """Проверка подписки пользователя на каналы"""
-    bot_token = os.getenv("BOT_TOKEN")
-    channels = [ch.strip() for ch in campaign.channel_usernames.split(',') if ch.strip()]
-    failed_channels = []
-
-    for channel in channels:
-        if not channel.startswith('@'):
-            channel = '@' + channel
-        url = f"https://api.telegram.org/bot{bot_token}/getChatMember"
-        try:
-            response = requests.get(url, params={'chat_id': channel, 'user_id': user_id}, timeout=10)
-            data = response.json()
-            if not data.get('ok') or data['result']['status'] not in ['member', 'administrator', 'creator']:
-                failed_channels.append(channel)
-        except Exception as e:
-            print(f"❌ Ошибка проверки подписки на {channel}: {e}")
-            failed_channels.append(channel)
-
-    return len(failed_channels) == 0, failed_channels
-
-
-def send_telegram_message(chat_id, text, reply_markup=None, parse_mode=None):
-    """Отправка сообщения через Telegram API"""
-    bot_token = os.getenv("BOT_TOKEN")
+# ==============================
+# SEND MESSAGE
+# ==============================
+def send_message(chat_id, text, reply_markup=None):
     data = {'chat_id': chat_id, 'text': text}
     if reply_markup:
         data['reply_markup'] = json.dumps(reply_markup)
-    if parse_mode:
-        data['parse_mode'] = parse_mode
     try:
-        requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data=data)
+        requests.post(f'https://api.telegram.org/bot{BOT_TOKEN}/sendMessage', data=data)
     except Exception as e:
-        print(f"❌ Ошибка отправки: {e}")
+        print(f"Ошибка отправки сообщения: {e}")
