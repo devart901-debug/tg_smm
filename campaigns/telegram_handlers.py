@@ -27,6 +27,7 @@ def telegram_webhook(request):
         print(f"Webhook error: {e}")
     return JsonResponse({'ok': True})
 
+
 # ==============================
 # MESSAGE HANDLER
 # ==============================
@@ -64,10 +65,8 @@ def handle_message(message):
     elif stage == 'phone':
         handle_phone_stage(chat_id, participant, text, campaign)
     elif stage == 'subscription':
-        send_message(
-            chat_id,
-            "📋 Пожалуйста, используйте кнопку 'Проверить подписку', чтобы продолжить"
-        )
+        ask_subscription(chat_id, campaign)
+
 
 # ==============================
 # CALLBACK HANDLER
@@ -84,7 +83,7 @@ def handle_callback(callback):
 
     participant = Participant.objects.filter(telegram_id=user_id, campaign=campaign).first()
     if not participant:
-        send_message(chat_id, "❌ Сначала нажмите /start для начала регистрации")
+        send_message(chat_id, "❌ Сначала нажмите /start для регистрации")
         return
 
     if data == 'check_subscription':
@@ -95,11 +94,9 @@ def handle_callback(callback):
             participant.save()
             send_message(
                 chat_id,
-                f"🎉 Регистрация завершена!\n👤 Имя: {participant.first_name}\n📞 Телефон: {participant.phone}",
-                reply_markup={'inline_keyboard': [[{'text': campaign.button_text or '🎯 Участвовать', 'callback_data': 'participate'}]]}
+                f"🎉 Регистрация завершена!\n👤 Имя: {participant.first_name}\n📞 Телефон: {participant.phone}"
             )
         else:
-            # Если не подписан, присылаем условия + кнопку
             send_message(
                 chat_id,
                 f"❌ Вы не подписаны на канал {failed_channel}\n{campaign.conditions_text or '📋 Ознакомьтесь с условиями акции'}",
@@ -111,22 +108,19 @@ def handle_callback(callback):
 # STAGES
 # ==============================
 def handle_start(chat_id, user_id, first_name, username, campaign):
-    # Проверяем есть ли участник
     participant = Participant.objects.filter(campaign=campaign, telegram_id=user_id).first()
     if participant:
         if participant.registration_stage == 'completed':
             send_message(
                 chat_id,
-                f"Вы уже зарегистрированы!\n👤 Имя: {participant.first_name}\n📞 Телефон: {participant.phone}",
-                reply_markup={'inline_keyboard': [[{'text': campaign.button_text or '🎯 Участвовать', 'callback_data': 'participate'}]]}
+                f"Вы уже зарегистрированы!\n👤 Имя: {participant.first_name}\n📞 Телефон: {participant.phone}"
             )
         elif participant.registration_stage == 'subscription':
             ask_subscription(chat_id, campaign)
         else:
-            send_message(chat_id, "❌ Вы начали регистрацию ранее. Пожалуйста, продолжите с того места, где остановились.")
+            send_message(chat_id, "❌ Вы начали регистрацию ранее. Продолжите с того места, где остановились.")
         return
 
-    # Если участника нет — создаем нового
     send_message(chat_id, campaign.first_message or "Добро пожаловать! Нажмите кнопку ниже, чтобы участвовать.")
     participant = Participant.objects.create(
         campaign=campaign,
@@ -147,6 +141,7 @@ def handle_name_stage(chat_id, participant, text):
     participant.save()
     ask_phone(chat_id, participant)
 
+
 def handle_phone_stage(chat_id, participant, text, campaign):
     if not text.strip():
         send_message(chat_id, "Пожалуйста, введите ваш номер:")
@@ -161,6 +156,7 @@ def handle_phone_stage(chat_id, participant, text, campaign):
     participant.save()
     ask_subscription(chat_id, campaign)
 
+
 def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
     participant = Participant.objects.filter(telegram_id=user_id, campaign=campaign).first()
     if not participant:
@@ -172,11 +168,13 @@ def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
     participant.save()
     ask_subscription(chat_id, campaign)
 
+
 # ==============================
 # ASK FUNCTIONS
 # ==============================
 def ask_name(chat_id):
     send_message(chat_id, "📝 Как вас зовут?\nВведите имя и фамилию:")
+
 
 def ask_phone(chat_id, participant):
     keyboard = {
@@ -186,13 +184,14 @@ def ask_phone(chat_id, participant):
     }
     send_message(chat_id, f"Приятно познакомиться, {participant.first_name}! Введите номер или нажмите кнопку:", reply_markup=keyboard)
 
+
 def ask_subscription(chat_id, campaign):
-    # Текст условий и кнопка проверки подписки
     text = campaign.conditions_text or "📋 Текст условий акции"
     keyboard = {
         'inline_keyboard': [[{'text': campaign.conditions_button or '✅ Проверить подписку', 'callback_data': 'check_subscription'}]]
     }
     send_message(chat_id, text, reply_markup=keyboard)
+
 
 # ==============================
 # SEND MESSAGE
