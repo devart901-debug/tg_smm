@@ -164,6 +164,20 @@ class Participant(models.Model):
     is_subscribed = models.BooleanField('Подписан на канал', default=False)
     created_at = models.DateTimeField('Дата регистрации', auto_now_add=True)
     
+    # Добавляем поле регистрации
+    registration_stage = models.CharField(
+        'Стадия регистрации',
+        max_length=20,
+        default='start',
+        choices=[
+            ('start', 'Начало'),
+            ('name', 'Ввод имени'),
+            ('phone', 'Ввод телефона'),
+            ('subscription', 'Проверка подписки'),
+            ('completed', 'Завершено')
+        ]
+    )
+    
     class Meta:
         verbose_name = 'Участник'
         verbose_name_plural = 'Участники'
