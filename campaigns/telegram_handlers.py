@@ -28,14 +28,18 @@ def telegram_webhook(request):
             data = callback.get('data')
             chat_id = callback['message']['chat']['id']
             user_id = callback['from']['id']
+            message_id = callback['message']['message_id']  # 🔹 ДОБАВЛЯЕМ
+            callback_query_id = callback['id']  # 🔹 ДОБАВЛЯЕМ
 
             participant = Participant.objects.filter(campaign=active_campaign, telegram_id=user_id).first()
             if not participant:
                 send_telegram_message(chat_id, "❌ Сначала нажмите /start")
+                answer_callback_query(callback_query_id, "❌ Сначала нажмите /start")
                 return JsonResponse({'ok': True})
 
             if data == 'check_subscription':
-                handle_subscription_stage(chat_id, user_id, active_campaign, participant)
+                # 🔹 ПЕРЕДАЕМ ДОПОЛНИТЕЛЬНЫЕ ПАРАМЕТРЫ
+                handle_subscription_stage(chat_id, user_id, active_campaign, participant, message_id, callback_query_id)
 
             return JsonResponse({'ok': True})
 
@@ -65,6 +69,7 @@ def telegram_webhook(request):
         print(f"❌ Error in webhook: {e}")
 
     return JsonResponse({'ok': True})
+
 
 def handle_start(chat_id, user_id, first_name, username, campaign):
     """Начало общения с ботом"""
@@ -120,7 +125,8 @@ def handle_user_message(chat_id, user_id, text, first_name, username, campaign):
         handle_phone_stage(chat_id, campaign, participant, text)
     elif stage == 'subscription':
         if text == (campaign.conditions_button or '✅ Проверить подписку'):
-            handle_subscription_stage(chat_id, user_id, campaign, participant)
+            # 🔹 ПЕРЕДАЕМ None для message_id и callback_query_id при обычном сообщении
+            handle_subscription_stage(chat_id, user_id, campaign, participant, None, None)
         else:
             send_telegram_message(
                 chat_id,
@@ -178,6 +184,7 @@ def handle_phone_stage(chat_id, campaign, participant, text):
     # 🔹 Отправляем условия с inline-кнопкой
     send_conditions_with_inline_button(chat_id, campaign)
 
+
 def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
     """Обработка контакта Telegram"""
     participant = Participant.objects.filter(campaign=campaign, telegram_id=user_id).first()
@@ -196,6 +203,7 @@ def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
     # 🔹 Отправляем условия акции с inline кнопкой
     send_conditions_with_inline_button(chat_id, campaign)
 
+
 def send_conditions_with_inline_button(chat_id, campaign):
     """Отправляем текст условий акции и inline кнопку"""
     inline_keyboard = {
@@ -211,7 +219,7 @@ def send_conditions_with_inline_button(chat_id, campaign):
     )
 
 
-def handle_subscription_stage(chat_id, user_id, campaign, participant):
+def handle_subscription_stage(chat_id, user_id, campaign, participant, message_id=None, callback_query_id=None):
     """Проверка подписки и завершение регистрации"""
     is_subscribed, failed_channels = check_user_subscription(user_id, campaign)
 
@@ -219,11 +227,21 @@ def handle_subscription_stage(chat_id, user_id, campaign, participant):
         participant.is_subscribed = True
         participant.registration_stage = 'completed'
         participant.save()
+        
+        # 🔹 Если это callback, отвечаем на него
+        if callback_query_id:
+            answer_callback_query(callback_query_id, "🎉 Регистрация завершена!")
+        
         send_telegram_message(
             chat_id,
             f"🎉 *Регистрация завершена!*\n\n✅ Вы успешно зарегистрированы!\n👤 Имя: {participant.first_name}\n📞 Телефон: {participant.phone}",
             parse_mode='Markdown'
         )
+        
+        # 🔹 Если есть message_id, удаляем старое сообщение с кнопкой
+        if message_id:
+            delete_message(chat_id, message_id)
+            
     else:
         failed_text = "\n".join([f"• {ch}" for ch in failed_channels])
         inline_keyboard = {
@@ -231,12 +249,28 @@ def handle_subscription_stage(chat_id, user_id, campaign, participant):
                 [{"text": "✅ Проверить подписку", "callback_data": "check_subscription"}]
             ]
         }
-        send_telegram_message(
-            chat_id,
-            f"❌ *Вы не подписаны на все каналы!*\n\nНе подписаны:\n{failed_text}\n\nПожалуйста, подпишитесь и нажмите кнопку снова:",
-            reply_markup=inline_keyboard,
-            parse_mode='Markdown'
-        )
+        
+        # 🔹 ОТВЕЧАЕМ НА CALLBACK, чтобы убрать "часики" на кнопке
+        if callback_query_id:
+            answer_callback_query(callback_query_id, "❌ Вы не подписаны на все каналы")
+        
+        # 🔹 Если есть message_id, РЕДАКТИРУЕМ существующее сообщение
+        if message_id:
+            edit_message_with_inline_button(
+                chat_id, 
+                message_id, 
+                f"❌ *Вы не подписаны на все каналы!*\n\nНе подписаны:\n{failed_text}\n\nПожалуйста, подпишитесь и нажмите кнопку снова:",
+                inline_keyboard,
+                parse_mode='Markdown'
+            )
+        else:
+            # 🔹 Если нет message_id (например, при обычном сообщении), отправляем новое
+            send_telegram_message(
+                chat_id,
+                f"❌ *Вы не подписаны на все каналы!*\n\nНе подписаны:\n{failed_text}\n\nПожалуйста, подпишитесь и нажмите кнопку снова:",
+                reply_markup=inline_keyboard,
+                parse_mode='Markdown'
+            )
 
 
 def check_user_subscription(user_id, campaign):
@@ -273,3 +307,49 @@ def send_telegram_message(chat_id, text, reply_markup=None, parse_mode=None):
         requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data=data)
     except Exception as e:
         print(f"❌ Ошибка отправки: {e}")
+
+
+def answer_callback_query(callback_query_id, text):
+    """Отвечаем на callback query (убирает часики)"""
+    bot_token = os.getenv("BOT_TOKEN")
+    data = {
+        'callback_query_id': callback_query_id,
+        'text': text,
+        'show_alert': False
+    }
+    try:
+        requests.post(f'https://api.telegram.org/bot{bot_token}/answerCallbackQuery', data=data)
+    except Exception as e:
+        print(f"❌ Ошибка ответа на callback: {e}")
+
+
+def edit_message_with_inline_button(chat_id, message_id, text, reply_markup=None, parse_mode=None):
+    """Редактируем сообщение с inline кнопкой"""
+    bot_token = os.getenv("BOT_TOKEN")
+    data = {
+        'chat_id': chat_id,
+        'message_id': message_id,
+        'text': text
+    }
+    if reply_markup:
+        data['reply_markup'] = json.dumps(reply_markup)
+    if parse_mode:
+        data['parse_mode'] = parse_mode
+    
+    try:
+        requests.post(f'https://api.telegram.org/bot{bot_token}/editMessageText', data=data)
+    except Exception as e:
+        print(f"❌ Ошибка редактирования сообщения: {e}")
+
+
+def delete_message(chat_id, message_id):
+    """Удаляем сообщение"""
+    bot_token = os.getenv("BOT_TOKEN")
+    data = {
+        'chat_id': chat_id,
+        'message_id': message_id
+    }
+    try:
+        requests.post(f'https://api.telegram.org/bot{bot_token}/deleteMessage', data=data)
+    except Exception as e:
+        print(f"❌ Ошибка удаления сообщения: {e}")
