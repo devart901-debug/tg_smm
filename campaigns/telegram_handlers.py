@@ -134,10 +134,19 @@ def handle_phone_stage(chat_id, campaign, participant, text):
         send_telegram_message(chat_id, "Пожалуйста, введите ваш телефон:")
         return
 
-    participant.phone = re.sub(r'[^\d+]', '', text.strip())
+    # Приводим номер к формату +7...
+    phone = re.sub(r'[^\d+]', '', text.strip())
+    if phone.startswith('8'):
+        phone = '+7' + phone[1:]
+    elif not phone.startswith('+'):
+        phone = '+' + phone
+
+    participant.phone = phone
     participant.registration_stage = 'subscription'
     participant.save()
+
     ask_for_subscription(chat_id, campaign, participant)
+
 
 
 def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
