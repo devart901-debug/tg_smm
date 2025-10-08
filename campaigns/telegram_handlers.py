@@ -7,6 +7,7 @@ from django.views.decorators.http import require_POST
 from .models import Campaign, Participant
 import os
 from dotenv import load_dotenv
+
 load_dotenv()
 
 
@@ -19,27 +20,31 @@ def telegram_webhook(request):
         if not active_campaign:
             print("❌ Нет активных кампаний с запущенным ботом")
             return JsonResponse({'ok': True})
-        
+
         update = json.loads(request.body)
-        if 'message' in update:
-            message = update['message']
-            chat_id = message['chat']['id']
-            user_id = message['from']['id']
-            text = message.get('text', '')
-            first_name = message['from'].get('first_name', '')
-            username = message['from'].get('username', '')
+        if 'message' not in update:
+            return JsonResponse({'ok': True})
 
-            # Если пользователь прислал контакт
-            if 'contact' in message:
-                phone = message['contact'].get('phone_number', '')
-                handle_contact(chat_id, user_id, phone, first_name, username, active_campaign)
-                return JsonResponse({'ok': True})
+        message = update['message']
+        chat_id = message['chat']['id']
+        user_id = message['from']['id']
+        first_name = message['from'].get('first_name', '')
+        username = message['from'].get('username', '')
+        text = message.get('text', '')
 
-            # Логика команд
-            if text == '/start':
-                handle_start(chat_id, user_id, first_name, username, active_campaign)
-            else:
-                handle_user_message(chat_id, user_id, text, first_name, username, active_campaign)
+        # Контакт
+        if 'contact' in message:
+            phone = message['contact'].get('phone_number', '')
+            handle_contact(chat_id, user_id, phone, first_name, username, active_campaign)
+            return JsonResponse({'ok': True})
+
+        # Команда /start
+        if text == '/start':
+            handle_start(chat_id, user_id, first_name, username, active_campaign)
+            return JsonResponse({'ok': True})
+
+        # Пользовательский текст
+        handle_user_message(chat_id, user_id, text, first_name, username, active_campaign)
 
     except Exception as e:
         print(f"❌ Error in webhook: {e}")
@@ -50,16 +55,17 @@ def telegram_webhook(request):
 def handle_start(chat_id, user_id, first_name, username, campaign):
     """Начало общения с ботом"""
     try:
-        # Отправляем приветственное сообщение
-        send_telegram_message(
-            chat_id,
-            campaign.first_message or "Добро пожаловать на мероприятие!"
-        )
-        # Создаем или обнуляем регистрацию
+        # Приветственное сообщение
+        send_telegram_message(chat_id, campaign.first_message or "Добро пожаловать на мероприятие!")
+
+        # Удаляем старые незавершенные регистрации
         Participant.objects.filter(
             telegram_id=user_id,
+            campaign=campaign,
             registration_stage__in=['name', 'phone', 'subscription']
         ).delete()
+
+        # Создаем нового участника
         participant = Participant.objects.create(
             campaign=campaign,
             telegram_id=user_id,
@@ -67,7 +73,9 @@ def handle_start(chat_id, user_id, first_name, username, campaign):
             first_name=first_name,
             registration_stage='name'
         )
+
         ask_name(chat_id, participant)
+
     except Exception as e:
         print(f"❌ Error in handle_start: {e}")
         send_telegram_message(chat_id, "❌ Произошла ошибка, попробуйте позже")
@@ -85,21 +93,25 @@ def ask_name(chat_id, participant):
 
 def handle_user_message(chat_id, user_id, text, first_name, username, campaign):
     """Обработка сообщений по стадиям регистрации"""
-    participant = Participant.objects.filter(
-        telegram_id=user_id,
-        registration_stage__in=['name', 'phone', 'subscription']
-    ).first()
+    participant = Participant.objects.filter(campaign=campaign, telegram_id=user_id).first()
     if not participant:
         send_telegram_message(chat_id, "❌ Пожалуйста, нажмите /start для начала регистрации")
         return
 
     stage = participant.registration_stage
+
     if stage == 'name':
         handle_name_stage(chat_id, participant, text)
     elif stage == 'phone':
         handle_phone_stage(chat_id, campaign, participant, text)
     elif stage == 'subscription':
-        handle_subscription_stage(chat_id, user_id, campaign, participant)
+        if text == (campaign.conditions_button or '✅ Проверить подписку'):
+            handle_subscription_stage(chat_id, user_id, campaign, participant)
+        else:
+            send_telegram_message(
+                chat_id,
+                f"❌ Сначала подпишитесь на каналы и нажмите кнопку '{campaign.conditions_button or '✅ Проверить подписку'}'"
+            )
 
 
 def handle_name_stage(chat_id, participant, text):
@@ -134,7 +146,7 @@ def handle_phone_stage(chat_id, campaign, participant, text):
         send_telegram_message(chat_id, "Пожалуйста, введите ваш телефон:")
         return
 
-    # Приводим номер к формату +7...
+    # Приведение к формату +7...
     phone = re.sub(r'[^\d+]', '', text.strip())
     if phone.startswith('8'):
         phone = '+7' + phone[1:]
@@ -148,15 +160,11 @@ def handle_phone_stage(chat_id, campaign, participant, text):
     ask_for_subscription(chat_id, campaign, participant)
 
 
-
 def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
-    """Обработка контакта"""
-    participant = Participant.objects.filter(
-        telegram_id=user_id,
-        registration_stage='phone'
-    ).first()
+    """Обработка контакта Telegram"""
+    participant = Participant.objects.filter(campaign=campaign, telegram_id=user_id).first()
     if not participant:
-        send_telegram_message(chat_id, "❌ Сначала введите ваше имя")
+        send_telegram_message(chat_id, "❌ Сначала нажмите /start")
         return
 
     participant.phone = re.sub(r'[^\d+]', '', phone)
@@ -184,6 +192,7 @@ def ask_for_subscription(chat_id, campaign, participant):
 def handle_subscription_stage(chat_id, user_id, campaign, participant):
     """Проверка подписки и завершение регистрации"""
     is_subscribed, failed_channels = check_user_subscription(user_id, campaign)
+
     if is_subscribed:
         participant.is_subscribed = True
         participant.registration_stage = 'completed'
@@ -233,6 +242,7 @@ def check_user_subscription(user_id, campaign):
 
 
 def send_telegram_message(chat_id, text, reply_markup=None, parse_mode=None):
+    """Отправка сообщения через Telegram API"""
     bot_token = os.getenv("BOT_TOKEN")
     data = {'chat_id': chat_id, 'text': text}
     if reply_markup:
