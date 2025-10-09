@@ -282,12 +282,21 @@ def check_user_subscription(user_id, campaign):
     for channel in channels:
         if not channel.startswith('@'):
             channel = '@' + channel
+        
         url = f"https://api.telegram.org/bot{bot_token}/getChatMember"
         try:
             response = requests.get(url, params={'chat_id': channel, 'user_id': user_id}, timeout=10)
             data = response.json()
-            if not data.get('ok') or data['result']['status'] not in ['member', 'administrator', 'creator']:
-                failed_channels.append(channel)
+            
+            # Улучшенная проверка статуса подписки
+            if data.get('ok'):
+                status = data['result']['status']
+                # Проверяем, что пользователь действительно подписан
+                if status in ['member', 'administrator', 'creator']:
+                    continue  # Подписан - переходим к следующему каналу
+                
+            failed_channels.append(channel)
+            
         except Exception as e:
             print(f"❌ Ошибка проверки подписки на {channel}: {e}")
             failed_channels.append(channel)
