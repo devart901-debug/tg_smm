@@ -16,31 +16,31 @@ class Campaign(models.Model):
     name = models.CharField('Название мероприятия', max_length=200)
     slug = models.SlugField('URL идентификатор', unique=True)
     status = models.CharField('Статус', max_length=10, choices=STATUS_CHOICES, default='draft')
-    channel_usernames = models.CharField('Username канала', max_length=100, default='@test_channel')
+    ##channel_usernames = models.CharField('Username канала', max_length=100, default='@test_channel')
     
     first_message = models.TextField(
         'Первое сообщение бота', 
         default='Добро пожаловать на мероприятие! Нажмите кнопку ниже чтобы участвовать в розыгрыше.'
     )
-    welcome_text = models.TextField('Текст приветствия', default='Добро пожаловать!')
-    button_text = models.CharField('Текст кнопки', max_length=50, default='🎯 Участвовать в розыгрыше')
+    ##welcome_text = models.TextField('Текст приветствия', default='Добро пожаловать!')
+    ##button_text = models.CharField('Текст кнопки', max_length=50, default='🎯 Участвовать в розыгрыше')
     
     # Новое поле для статуса бота
     bot_is_running = models.BooleanField('Бот запущен', default=False)
 
 
     
-    theme_color = models.CharField('Цвет темы', max_length=7, default='#FF6B35')
+    ##theme_color = models.CharField('Цвет темы', max_length=7, default='#FF6B35')
     
      # НОВЫЕ ПОЛЯ:
     conditions_text = models.TextField(
         'Текст условий акции', 
         default='Для участия в розыгрыше необходимо:\n• Быть подписанным на наш канал\n• Заполнить контактные данные\n• Согласиться на обработку персональных данных'
     )
-    prizes_text = models.TextField(
-        'Текст призов', 
-        default='🏆 Главные призы:\n• Профессиональный графический планшет\n• Набор дизайнерских инструментов\n• Годовой курс по дизайну'
-    )
+    ##prizes_text = models.TextField(
+    ##    'Текст призов', 
+    ##    default='🏆 Главные призы:\n• Профессиональный графический планшет\n• Набор дизайнерских инструментов\n• Годовой курс по дизайну'
+    ##)
     share_phone_button = models.CharField(
         'Текст кнопки "Поделиться номером"', 
         max_length=50, 
@@ -51,11 +51,11 @@ class Campaign(models.Model):
         max_length=50, 
         default='✅ Проверить подписку'
     )
-    prizes_button = models.CharField(
-        'Текст кнопки "Призы"', 
-        max_length=50, 
-        default='🎁 Посмотреть призы'
-    )
+    ##prizes_button = models.CharField(
+    ##    'Текст кнопки "Призы"', 
+    ##    max_length=50, 
+    ##    default='🎁 Посмотреть призы'
+    ##)
 
      # Новые поля для розыгрыша
     winners_count = models.IntegerField('Количество победителей', default=1)
@@ -69,18 +69,18 @@ class Campaign(models.Model):
         help_text='Укажите usernames каналов через запятую, например: @channel1, @channel2'
     )
 
-    registration_stage = models.CharField(
-        'Стадия регистрации', 
-        max_length=20, 
-        default='start',
-        choices=[
-            ('start', 'Начало'),
-            ('name', 'Ввод имени'),
-            ('phone', 'Ввод телефона'),
-            ('subscription', 'Проверка подписки'),
-            ('completed', 'Завершено')
-        ]
-    )
+    ##registration_stage = models.CharField(
+    ##    'Стадия регистрации', 
+    ##    max_length=20, 
+    ##    default='start',
+     ##   choices=[
+    ##        ('start', 'Начало'),
+    ##        ('name', 'Ввод имени'),
+    ##        ('phone', 'Ввод телефона'),
+    ##        ('subscription', 'Проверка подписки'),
+    ##        ('completed', 'Завершено')
+    ##    ]
+    ##)
 
     def start_bot(self):
         """Запуск бота через вебхук"""
