@@ -181,6 +181,10 @@ def handle_phone_stage(chat_id, campaign, participant, text):
     remove_keyboard = {"remove_keyboard": True}
     send_telegram_message(chat_id, "Спасибо! Теперь ознакомьтесь с условиями розыгрыша:", reply_markup=remove_keyboard)
 
+    # 🔹 Ждем немного перед отправкой условий
+    import time
+    time.sleep(0.5)
+    
     # 🔹 Отправляем условия с inline-кнопкой
     send_conditions_with_inline_button(chat_id, campaign)
 
