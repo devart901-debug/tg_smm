@@ -80,16 +80,47 @@ def telegram_webhook(request):
 def handle_start(chat_id, user_id, first_name, username, campaign):
     """Начало общения с ботом"""
     try:
-        # Приветственное сообщение
-        welcome_message = campaign.first_message or "Добро пожаловать на мероприятие!"
-        send_telegram_message(chat_id, welcome_message)
+        # 🔹 ПРОВЕРЯЕМ ЕСТЬ ЛИ УЖЕ ЗАВЕРШЕННАЯ РЕГИСТРАЦИЯ
+        existing_participant = Participant.objects.filter(
+            campaign=campaign, 
+            telegram_id=user_id,
+            registration_stage='completed'
+        ).first()
+        
+        if existing_participant:
+            # 🔹 ЕСЛИ РЕГИСТРАЦИЯ УЖЕ ЗАВЕРШЕНА - ПОКАЗЫВАЕМ СТАТУС
+            send_telegram_message(
+                chat_id,
+                f"🎉 *Вы уже зарегистрированы!*\n\n"
+                f"✅ Ваша регистрация подтверждена\n"
+                f"👤 Имя: {existing_participant.first_name}\n"
+                f"📞 Телефон: {existing_participant.phone}\n\n"
+                f"Ожидайте результатов розыгрыша!",
+                parse_mode='Markdown'
+            )
+            return
 
-        # Удаляем старые незавершенные регистрации
-        Participant.objects.filter(
+        # 🔹 ПРОВЕРЯЕМ ЕСТЬ ЛИ НЕЗАВЕРШЕННАЯ РЕГИСТРАЦИЯ
+        incomplete_participant = Participant.objects.filter(
             telegram_id=user_id,
             campaign=campaign,
             registration_stage__in=['name', 'phone', 'subscription']
-        ).delete()
+        ).first()
+        
+        if incomplete_participant:
+            # 🔹 ЕСЛИ ЕСТЬ НЕЗАВЕРШЕННАЯ РЕГИСТРАЦИЯ - ПРОДОЛЖАЕМ С ТЕКУЩЕЙ СТАДИИ
+            stage = incomplete_participant.registration_stage
+            if stage == 'name':
+                ask_name(chat_id, incomplete_participant)
+            elif stage == 'phone':
+                ask_phone(chat_id, incomplete_participant)
+            elif stage == 'subscription':
+                send_conditions_with_inline_button(chat_id, campaign)
+            return
+
+        # 🔹 ЕСЛИ УЧАСТНИКА ВООБЩЕ НЕТ - НАЧИНАЕМ НОВУЮ РЕГИСТРАЦИЮ
+        welcome_message = campaign.first_message or "Добро пожаловать на мероприятие!"
+        send_telegram_message(chat_id, welcome_message)
 
         # Создаем нового участника
         participant = Participant.objects.create(
@@ -113,7 +144,7 @@ def ask_name(chat_id, participant):
     """Запрос имени"""
     send_telegram_message(
         chat_id,
-        "📝 *Как вас зовут?*\n\nВведите ваше имя и фамилию:",
+        "📝 *Как вас зовут?*\n\nВведите ваше Имя",
         {'remove_keyboard': True},
         parse_mode='Markdown'
     )
@@ -122,8 +153,22 @@ def ask_name(chat_id, participant):
 def handle_user_message(chat_id, user_id, text, first_name, username, campaign):
     """Обработка сообщений по стадиям регистрации"""
     participant = Participant.objects.filter(campaign=campaign, telegram_id=user_id).first()
+    
     if not participant:
         send_telegram_message(chat_id, "❌ Пожалуйста, нажмите /start для начала регистрации")
+        return
+
+    # 🔹 ЕСЛИ РЕГИСТРАЦИЯ УЖЕ ЗАВЕРШЕНА - ПОКАЗЫВАЕМ СТАТУС
+    if participant.registration_stage == 'completed':
+        send_telegram_message(
+            chat_id,
+            f"🎉 *Вы уже зарегистрированы!*\n\n"
+            f"✅ Ваша регистрация подтверждена\n"
+            f"👤 Имя: {participant.first_name}\n"
+            f"📞 Телефон: {participant.phone}\n\n"
+            f"Ожидайте результатов розыгрыша!",
+            parse_mode='Markdown'
+        )
         return
 
     stage = participant.registration_stage
@@ -135,7 +180,6 @@ def handle_user_message(chat_id, user_id, text, first_name, username, campaign):
         handle_phone_stage(chat_id, campaign, participant, text)
     elif stage == 'subscription':
         if text == (campaign.conditions_button or '✅ Проверить подписку'):
-            # 🔹 ПЕРЕДАЕМ None для message_id и callback_query_id при обычном сообщении
             handle_subscription_stage(chat_id, user_id, campaign, participant, None, None)
         else:
             send_telegram_message(
@@ -168,7 +212,7 @@ def ask_phone(chat_id, participant):
     }
     send_telegram_message(
         chat_id,
-        f"Приятно познакомиться, {participant.first_name}! 📱 *Ваш номер телефона*\n\nВведите номер или нажмите кнопку:",
+        f"Приятно познакомиться, {participant.first_name}!\n\n📱 Введите *ваш номер телефона* номер или нажмите кнопку *Поделиться*:",
         keyboard,
         parse_mode='Markdown'
     )
