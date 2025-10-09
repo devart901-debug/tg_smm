@@ -206,14 +206,20 @@ def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
 
 def send_conditions_with_inline_button(chat_id, campaign):
     """Отправляем текст условий акции и inline кнопку"""
+    # Проверяем, есть ли текст условий
+    conditions_text = campaign.conditions_text
+    if not conditions_text or conditions_text.strip() == "":
+        conditions_text = "📋 *Условия участия в розыгрыше:*\n\nПодпишитесь на указанные каналы для участия."
+    
     inline_keyboard = {
         "inline_keyboard": [
-            [{"text": "✅ Проверить подписку", "callback_data": "check_subscription"}]
+            [{"text": campaign.conditions_button or "✅ Проверить подписку", "callback_data": "check_subscription"}]
         ]
     }
+    
     send_telegram_message(
         chat_id,
-        campaign.conditions_text,
+        conditions_text,
         reply_markup=inline_keyboard,
         parse_mode='Markdown'
     )
