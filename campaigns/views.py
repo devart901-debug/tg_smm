@@ -5,18 +5,12 @@ from django.shortcuts import get_object_or_404
 from django.contrib.admin.views.decorators import staff_member_required
 from .models import Campaign
 
+# campaigns/views.py
+from django.shortcuts import redirect
+
 def home_page(request):
-    """Главная страница для тестирования"""
-    return HttpResponse("""
-    <h1>✅ Telegram Bot Server is Running!</h1>
-    <p>Сервер работает корректно.</p>
-    <ul>
-        <li><a href="/admin/">Админка Django</a></li>
-        <li><a href="/webhook/test/">Тест вебхука</a></li>
-    </ul>
-    <p>Проверьте вебхук Telegram:</p>
-    <pre>curl https://api.telegram.org/bot8439043728:AAHMSRBHFZPR-KMLC4fggKNPNuT1MdEmD6c/getWebhookInfo</pre>
-    """)
+    """Главная страница - редирект на админку"""
+    return redirect('/admin/')
 
 def test_page(request):
     """Тестовая страница вебхука"""
