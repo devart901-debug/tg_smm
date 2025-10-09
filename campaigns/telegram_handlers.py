@@ -230,52 +230,47 @@ def handle_contact(chat_id, user_id, phone, first_name, username, campaign):
 
 
 def send_conditions_with_inline_button(chat_id, campaign):
-    """Отправляем текст условий акции и inline кнопку"""
-    # Если текст условий пустой, используем дефолтный
-    if not campaign.conditions_text or campaign.conditions_text.strip() == "":
-        conditions_text = f"""
-📋 *УСЛОВИЯ УЧАСТИЯ В РОЗЫГРЫШЕ*
-
-Для участия в розыгрыше необходимо подписаться на следующие каналы:
-
-{get_channels_list(campaign)}
-
-После подписки нажмите кнопку «Проверить подписку» для завершения регистрации.
-        """
-    else:
+    """Отправляем текст условий акции и inline кнопку - УПРОЩЕННАЯ ВЕРСИЯ"""
+    try:
+        # Просто берем текст как есть, без форматирования
         conditions_text = campaign.conditions_text
-    
-    # Текст кнопки
-    button_text = campaign.conditions_button or "✅ Проверить подписку"
-    
-    inline_keyboard = {
-        "inline_keyboard": [
-            [{"text": button_text, "callback_data": "check_subscription"}]
-        ]
-    }
-    
-    print(f"📋 Sending conditions to {chat_id}")
-    print(f"🛜 Button text: {button_text}")
-    print(f"📝 Conditions text preview: {conditions_text[:100]}...")
-    
-    send_telegram_message(
-        chat_id,
-        conditions_text,
-        reply_markup=inline_keyboard,
-        parse_mode='Markdown'
-    )
-
-
-def get_channels_list(campaign):
-    """Форматирует список каналов для отображения"""
-    if not campaign.channel_usernames:
-        return "• Список каналов не настроен"
-    
-    channels = [ch.strip() for ch in campaign.channel_usernames.split(',') if ch.strip()]
-    if not channels:
-        return "• Список каналов не настроен"
-    
-    return "\n".join([f"• {ch if ch.startswith('@') else '@' + ch}" for ch in channels])
+        
+        # Если нет текста, используем базовый
+        if not conditions_text or conditions_text.strip() == "":
+            conditions_text = "📋 Для участия в розыгрыше подпишитесь на указанные каналы и нажмите кнопку проверки подписки."
+        
+        # Текст кнопки
+        button_text = campaign.conditions_button or "✅ Проверить подписку"
+        
+        inline_keyboard = {
+            "inline_keyboard": [
+                [{"text": button_text, "callback_data": "check_subscription"}]
+            ]
+        }
+        
+        print(f"📋 Sending conditions to {chat_id}")
+        print(f"📝 Conditions text: {conditions_text}")
+        
+        # Отправляем БЕЗ Markdown форматирования
+        send_telegram_message(
+            chat_id,
+            conditions_text,
+            reply_markup=inline_keyboard,
+            parse_mode=None  # Важно: без форматирования
+        )
+            
+    except Exception as e:
+        print(f"❌ Error in send_conditions_with_inline_button: {e}")
+        # Фолбэк - минимальное сообщение
+        send_telegram_message(
+            chat_id,
+            "📋 Для участия подпишитесь на каналы и нажмите кнопку проверки:",
+            reply_markup={
+                "inline_keyboard": [
+                    [{"text": "✅ Проверить подписку", "callback_data": "check_subscription"}]
+                ]
+            }
+        )
 
 
 def handle_subscription_stage(chat_id, user_id, campaign, participant, message_id=None, callback_query_id=None):
@@ -398,17 +393,25 @@ def send_telegram_message(chat_id, text, reply_markup=None, parse_mode=None):
     if parse_mode:
         data['parse_mode'] = parse_mode
     
-    print(f"📤 Sending message to {chat_id}: {text[:100]}...")  # Логирование
+    print(f"📤 Sending message to {chat_id}")
+    print(f"📝 Text preview: {text[:100]}...")
     if reply_markup:
         print(f"🛜 Reply markup: {reply_markup}")
     
     try:
-        response = requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data=data, timeout=10)
+        response = requests.post(
+            f'https://api.telegram.org/bot{bot_token}/sendMessage', 
+            data=data, 
+            timeout=10
+        )
+        
         if response.status_code != 200:
             print(f"⚠️ Ошибка Telegram API: {response.status_code} - {response.text}")
-        else:
-            print(f"✅ Message sent successfully")
+            return response
+            
+        print(f"✅ Message sent successfully")
         return response
+        
     except Exception as e:
         print(f"❌ Ошибка отправки: {e}")
         return None
