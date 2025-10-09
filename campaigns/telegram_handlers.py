@@ -296,7 +296,6 @@ def check_user_subscription(user_id, campaign):
 
 
 def send_telegram_message(chat_id, text, reply_markup=None, parse_mode=None):
-    """Отправка сообщения через Telegram API"""
     bot_token = os.getenv("BOT_TOKEN")
     data = {'chat_id': chat_id, 'text': text}
     if reply_markup:
@@ -304,9 +303,12 @@ def send_telegram_message(chat_id, text, reply_markup=None, parse_mode=None):
     if parse_mode:
         data['parse_mode'] = parse_mode
     try:
-        requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data=data)
+        response = requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data=data)
+        if response.status_code != 200:
+            print(f"⚠️ Ошибка Telegram: {response.text}")
     except Exception as e:
         print(f"❌ Ошибка отправки: {e}")
+
 
 
 def answer_callback_query(callback_query_id, text):
